@@ -279,12 +279,31 @@ function appendBlockLines(target: string[], blockLines: string[], blockType: Not
     return;
   }
 
-  const needsBlockSeparation = blockType === "image";
+  const previousLine = findLastNonEmptyLine(target);
+  const needsBlockSeparation =
+    blockType === "image" ||
+    (!!previousLine && isListMarkdownLine(previousLine) && !isListLike(blockType));
+
   if (needsBlockSeparation && target.length > 0 && target[target.length - 1] !== "") {
     target.push("");
   }
 
   target.push(...blockLines);
+}
+
+function findLastNonEmptyLine(lines: string[]): string | undefined {
+  for (let index = lines.length - 1; index >= 0; index -= 1) {
+    const line = lines[index];
+    if (line && line.trim().length > 0) {
+      return line;
+    }
+  }
+
+  return undefined;
+}
+
+function isListMarkdownLine(line: string): boolean {
+  return /^(?:\s*)(?:[-*+] |\d+\. |- \[[ x]\] )/.test(line);
 }
 
 function compactLines(lines: string[]): string[] {
