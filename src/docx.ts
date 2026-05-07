@@ -1,9 +1,11 @@
 import { Buffer } from "node:buffer";
+import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { imageSize } from "image-size";
 import {
   AlignmentType,
   BorderStyle,
+  CharacterSet,
   Document,
   ExternalHyperlink,
   HeadingLevel,
@@ -34,6 +36,11 @@ type DocxImageType = "jpg" | "png" | "gif" | "bmp";
 const MAX_IMAGE_WIDTH = 520;
 const MAX_IMAGE_HEIGHT = 680;
 const ORDERED_LIST_REFERENCE = "notion-ordered-list";
+const DEFAULT_FONT_FAMILY = "Inter";
+const ITALIC_FONT_FAMILY = "Inter Italic";
+const DEFAULT_FONT_SIZE = 24;
+const REGULAR_FONT_PATH = resolve("fonts/Inter-VariableFont_opsz,wght.ttf");
+const ITALIC_FONT_PATH = resolve("fonts/Inter-Italic-VariableFont_opsz,wght.ttf");
 
 async function main(): Promise<void> {
   const options = await parseArgs(process.argv);
@@ -77,8 +84,98 @@ async function parseArgs(argv: string[]): Promise<CliOptions> {
 
 async function renderDocxDocument(page: NotionPageContent): Promise<Document> {
   const children = await renderNodes(page.blocks, 0);
+  const fonts = await loadEmbeddedFonts();
 
   return new Document({
+    fonts,
+    styles: {
+      default: {
+        document: {
+          run: {
+            font: DEFAULT_FONT_FAMILY,
+            size: DEFAULT_FONT_SIZE,
+          },
+        },
+      },
+      paragraphStyles: [
+        {
+          id: "Title",
+          name: "Title",
+          basedOn: "Normal",
+          next: "Normal",
+          quickFormat: true,
+          run: {
+            font: DEFAULT_FONT_FAMILY,
+            size: 34,
+            bold: true,
+            color: "111827",
+          },
+          paragraph: {
+            spacing: {
+              before: 0,
+              after: 240,
+            },
+          },
+        },
+        {
+          id: "Heading1",
+          name: "Heading 1",
+          basedOn: "Normal",
+          next: "Normal",
+          quickFormat: true,
+          run: {
+            font: DEFAULT_FONT_FAMILY,
+            size: 30,
+            bold: true,
+            color: "111827",
+          },
+          paragraph: {
+            spacing: {
+              before: 320,
+              after: 140,
+            },
+          },
+        },
+        {
+          id: "Heading2",
+          name: "Heading 2",
+          basedOn: "Normal",
+          next: "Normal",
+          quickFormat: true,
+          run: {
+            font: DEFAULT_FONT_FAMILY,
+            size: 28,
+            bold: true,
+            color: "111827",
+          },
+          paragraph: {
+            spacing: {
+              before: 280,
+              after: 120,
+            },
+          },
+        },
+        {
+          id: "Heading3",
+          name: "Heading 3",
+          basedOn: "Normal",
+          next: "Normal",
+          quickFormat: true,
+          run: {
+            font: DEFAULT_FONT_FAMILY,
+            size: 26,
+            bold: true,
+            color: "111827",
+          },
+          paragraph: {
+            spacing: {
+              before: 220,
+              after: 100,
+            },
+          },
+        },
+      ],
+    },
     numbering: {
       config: [
         {
@@ -106,8 +203,14 @@ async function renderDocxDocument(page: NotionPageContent): Promise<Document> {
           new Paragraph({
             text: sanitizeText(page.title),
             heading: HeadingLevel.TITLE,
+            spacing: {
+              after: 240,
+            },
           }),
           new Paragraph({
+            spacing: {
+              after: 180,
+            },
             children: [
               new ExternalHyperlink({
                 link: page.url,
@@ -258,7 +361,16 @@ function renderParagraphBlock(
   options?: { prefix?: string },
 ): Paragraph[] {
   const children = renderRichTextChildren(richText, options?.prefix);
-  return children.length > 0 ? [new Paragraph({ children })] : [];
+  return children.length > 0
+    ? [
+        new Paragraph({
+          spacing: {
+            after: 120,
+          },
+          children,
+        }),
+      ]
+    : [];
 }
 
 function renderHeadingBlock(
@@ -266,7 +378,16 @@ function renderHeadingBlock(
   heading: (typeof HeadingLevel)[keyof typeof HeadingLevel],
 ): Paragraph[] {
   const children = renderRichTextChildren(richText);
-  return children.length > 0 ? [new Paragraph({ heading, children })] : [];
+  return children.length > 0
+    ? [
+        new Paragraph({
+          heading,
+          style: resolveHeadingStyle(heading),
+          spacing: resolveHeadingSpacing(heading),
+          children,
+        }),
+      ]
+    : [];
 }
 
 function renderBulletBlock(richText: Parameters<typeof renderPlainText>[0], level: number): Paragraph[] {
@@ -415,6 +536,9 @@ async function fetchImageRun(url: string, altText: string): Promise<ImageRun | n
 function renderLinkParagraphs(url: string, label: string): Paragraph[] {
   return [
     new Paragraph({
+      spacing: {
+        after: 120,
+      },
       children: [
         new ExternalHyperlink({
           link: url,
@@ -437,7 +561,12 @@ function renderRichTextChildren(
   const children: ParagraphChild[] = [];
 
   if (prefix) {
-    children.push(new TextRun({ text: sanitizeText(prefix) }));
+    children.push(
+      new TextRun({
+        text: sanitizeText(prefix),
+        font: DEFAULT_FONT_FAMILY,
+      }),
+    );
   }
 
   for (const item of richText) {
@@ -452,7 +581,7 @@ function renderRichTextChildren(
       bold: item.annotations.bold,
       italics: item.annotations.italic,
       strike: item.annotations.strikethrough,
-      font: item.annotations.code ? "Courier New" : undefined,
+      font: resolveTextRunFont(item.annotations.code, item.annotations.italic),
     });
 
     if (item.href) {
@@ -465,7 +594,7 @@ function renderRichTextChildren(
               bold: item.annotations.bold,
               italics: item.annotations.italic,
               strike: item.annotations.strikethrough,
-              font: item.annotations.code ? "Courier New" : undefined,
+              font: resolveTextRunFont(item.annotations.code, item.annotations.italic),
               style: "Hyperlink",
             }),
           ],
@@ -482,6 +611,70 @@ function renderRichTextChildren(
 
 function appendChildren(paragraphs: Paragraph[], children: Paragraph[]): Paragraph[] {
   return [...paragraphs, ...children];
+}
+
+async function loadEmbeddedFonts(): Promise<Array<{
+  name: string;
+  data: Buffer;
+  characterSet: (typeof CharacterSet)[keyof typeof CharacterSet];
+}>> {
+  const [regularFont, italicFont] = await Promise.all([
+    readFile(REGULAR_FONT_PATH),
+    readFile(ITALIC_FONT_PATH),
+  ]);
+
+  return [
+    {
+      name: DEFAULT_FONT_FAMILY,
+      data: regularFont,
+      characterSet: CharacterSet.ANSI,
+    },
+    {
+      name: ITALIC_FONT_FAMILY,
+      data: italicFont,
+      characterSet: CharacterSet.ANSI,
+    },
+  ];
+}
+
+function resolveTextRunFont(isCode: boolean, isItalic: boolean): string | undefined {
+  if (isCode) {
+    return "Courier New";
+  }
+
+  return isItalic ? ITALIC_FONT_FAMILY : DEFAULT_FONT_FAMILY;
+}
+
+function resolveHeadingStyle(heading: (typeof HeadingLevel)[keyof typeof HeadingLevel]): string | undefined {
+  switch (heading) {
+    case HeadingLevel.TITLE:
+      return "Title";
+    case HeadingLevel.HEADING_1:
+      return "Heading1";
+    case HeadingLevel.HEADING_2:
+      return "Heading2";
+    case HeadingLevel.HEADING_3:
+      return "Heading3";
+    default:
+      return undefined;
+  }
+}
+
+function resolveHeadingSpacing(
+  heading: (typeof HeadingLevel)[keyof typeof HeadingLevel],
+): { before?: number; after?: number } | undefined {
+  switch (heading) {
+    case HeadingLevel.TITLE:
+      return { before: 0, after: 240 };
+    case HeadingLevel.HEADING_1:
+      return { before: 320, after: 140 };
+    case HeadingLevel.HEADING_2:
+      return { before: 280, after: 120 };
+    case HeadingLevel.HEADING_3:
+      return { before: 220, after: 100 };
+    default:
+      return undefined;
+  }
 }
 
 function clampListLevel(level: number): number {
