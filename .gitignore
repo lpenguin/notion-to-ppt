@@ -3,6 +3,7 @@ node_modules/
 dist/
 tmp/
 *.pptx
+*.docx
 *.md.tmp
 
 # Generated presentation artifacts
