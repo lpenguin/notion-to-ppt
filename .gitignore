@@ -4,3 +4,7 @@ dist/
 tmp/
 *.pptx
 *.md.tmp
+
+# Generated presentation artifacts
+*.html
+high-concept-2-0.md
