@@ -30,7 +30,7 @@ export function renderDeckMarkdown(page: NotionPageContent): string {
       continue;
     }
 
-    currentSlide.lines.push(...renderBlock(node, 0));
+    appendBlockLines(currentSlide.lines, renderBlock(node, 0), node.block.type);
   }
 
   for (const slide of slides) {
@@ -60,9 +60,43 @@ export function renderDeckMarkdown(page: NotionPageContent): string {
     "  section .notion-column > :first-child {",
     "    margin-top: 0;",
     "  }",
-    "  section .notion-column img {",
+    "  section:has(> p > img),",
+    "  section:has(> figure) {",
+    "    display: flex;",
+    "    flex-direction: column;",
+    "    align-items: stretch;",
+    "  }",
+    "  section > p:has(> img),",
+    "  section > figure {",
+    "    flex: 1 1 auto;",
+    "    min-height: 0;",
+    "    display: flex;",
+    "    align-items: center;",
+    "    justify-content: center;",
+    "    margin-bottom: 0;",
+    "  }",
+    "  section > figure {",
+    "    margin-left: 0;",
+    "    margin-right: 0;",
+    "  }",
+    "  section li:has(img) {",
+    "    display: flex;",
+    "    flex-direction: column;",
+    "    gap: 0.5rem;",
+    "  }",
+    "  section li img {",
+    "    align-self: center;",
+    "    max-height: 24vh;",
+    "  }",
+    "  section img {",
     "    max-width: 100%;",
+    "    max-height: 100%;",
+    "    width: auto;",
     "    height: auto;",
+    "    object-fit: contain;",
+    "  }",
+    "  section .notion-column img {",
+    "    max-height: 100%;",
     "  }",
     "---",
     "",
@@ -163,7 +197,8 @@ function renderBlock(node: NotionBlockNode, depth: number): string[] {
     case "image": {
       const imageUrl = block.image.type === "external" ? block.image.external.url : block.image.file.url;
       const caption = renderPlainText(block.image.caption) || "Image";
-      lines.push(`![${caption}](${imageUrl})`);
+      const widthStyle = getImageWidthStyle(block);
+      lines.push(widthStyle ? renderImageHtml(imageUrl, caption, widthStyle) : `![${caption}](${imageUrl})`);
       break;
     }
     case "bookmark": {
@@ -217,7 +252,7 @@ function renderBlock(node: NotionBlockNode, depth: number): string[] {
 
   for (const child of node.children) {
     const childDepth = isListLike(block.type) ? depth + 1 : depth;
-    lines.push(...renderBlock(child, childDepth));
+    appendBlockLines(lines, renderBlock(child, childDepth), child.block.type);
   }
 
   return compactLines(lines);
@@ -237,6 +272,19 @@ function getCurrentSlide(slides: Slide[]): Slide {
 
 function finalizeSlide(slide: Slide): void {
   slide.lines = compactLines(slide.lines);
+}
+
+function appendBlockLines(target: string[], blockLines: string[], blockType: NotionBlockNode["block"]["type"]): void {
+  if (blockLines.length === 0) {
+    return;
+  }
+
+  const needsBlockSeparation = blockType === "image";
+  if (needsBlockSeparation && target.length > 0 && target[target.length - 1] !== "") {
+    target.push("");
+  }
+
+  target.push(...blockLines);
 }
 
 function compactLines(lines: string[]): string[] {
@@ -403,7 +451,7 @@ function renderBlockHtml(node: NotionBlockNode): string {
     case "image": {
       const imageUrl = block.image.type === "external" ? block.image.external.url : block.image.file.url;
       const caption = renderPlainText(block.image.caption) || "Image";
-      return `<figure><img src="${escapeAttribute(imageUrl)}" alt="${escapeAttribute(caption)}" style="max-width:100%; height:auto;" />${renderFigureCaption(caption)}</figure>`;
+      return renderImageHtml(imageUrl, caption, getImageWidthStyle(block));
     }
     case "bookmark": {
       const url = escapeAttribute(block.bookmark.url);
@@ -458,6 +506,11 @@ function renderListItemHtml(tagName: "ul" | "ol", text: string, children: Notion
   }
 
   return `<${tagName}><li>${body}</li></${tagName}>`;
+}
+
+function renderImageHtml(imageUrl: string, caption: string, widthStyle?: string): string {
+  const style = [widthStyle, "max-width:100%", "height:auto"].filter((value) => value && value.length > 0).join("; ");
+  return `<figure><img src="${escapeAttribute(imageUrl)}" alt="${escapeAttribute(caption)}" style="${style}" />${renderFigureCaption(caption)}</figure>`;
 }
 
 function renderFigureCaption(caption: string): string {
@@ -563,4 +616,67 @@ function getColumnWidthRatio(column: NotionBlockNode): number | undefined {
 
 function formatWidthToken(value: number): string {
   return value.toFixed(3).replace(/\.0+$/, "").replace(/(\.\d*?)0+$/, "$1");
+}
+
+function getImageWidthStyle(block: Extract<NotionBlockNode["block"], { type: "image" }>): string | undefined {
+  const imageData = block.image as {
+    width?: number | string;
+    display_width?: number | string;
+    file?: { width?: number | string };
+    external?: { width?: number | string };
+  };
+  const blockData = block as {
+    width?: number | string;
+    format?: { block_width?: number | string };
+  };
+
+  return normalizeWidthStyle(
+    imageData.width ??
+      imageData.display_width ??
+      imageData.file?.width ??
+      imageData.external?.width ??
+      blockData.width ??
+      blockData.format?.block_width,
+  );
+}
+
+function normalizeWidthStyle(value: unknown): string | undefined {
+  if (typeof value === "number") {
+    return normalizeNumericWidth(value);
+  }
+
+  if (typeof value !== "string") {
+    return undefined;
+  }
+
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return undefined;
+  }
+
+  if (/^\d+(?:\.\d+)?px$/i.test(trimmed)) {
+    return `${formatWidthToken(Number.parseFloat(trimmed))}px`;
+  }
+
+  if (/^\d+(?:\.\d+)?%$/.test(trimmed)) {
+    return `${formatWidthToken(Number.parseFloat(trimmed))}%`;
+  }
+
+  if (/^\d+(?:\.\d+)?$/.test(trimmed)) {
+    return normalizeNumericWidth(Number.parseFloat(trimmed));
+  }
+
+  return undefined;
+}
+
+function normalizeNumericWidth(value: number): string | undefined {
+  if (!Number.isFinite(value) || value <= 0) {
+    return undefined;
+  }
+
+  if (value <= 1) {
+    return `${formatWidthToken(value * 100)}%`;
+  }
+
+  return `${formatWidthToken(value)}px`;
 }
