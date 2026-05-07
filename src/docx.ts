@@ -13,7 +13,12 @@ import {
   LevelFormat,
   Packer,
   Paragraph,
+  Table,
+  TableCell,
+  TableLayoutType,
+  TableRow,
   TextRun,
+  WidthType,
 } from "docx";
 import type { ParagraphChild } from "docx";
 import { Command } from "commander";
@@ -41,6 +46,7 @@ const ITALIC_FONT_FAMILY = "Inter Italic";
 const DEFAULT_FONT_SIZE = 24;
 const REGULAR_FONT_PATH = resolve("fonts/Inter-VariableFont_opsz,wght.ttf");
 const ITALIC_FONT_PATH = resolve("fonts/Inter-Italic-VariableFont_opsz,wght.ttf");
+type DocxBlock = Paragraph | Table;
 
 async function main(): Promise<void> {
   const options = await parseArgs(process.argv);
@@ -231,17 +237,17 @@ async function renderDocxDocument(page: NotionPageContent): Promise<Document> {
   });
 }
 
-async function renderNodes(nodes: NotionBlockNode[], listDepth: number): Promise<Paragraph[]> {
-  const paragraphs: Paragraph[] = [];
+async function renderNodes(nodes: NotionBlockNode[], listDepth: number): Promise<DocxBlock[]> {
+  const blocks: DocxBlock[] = [];
 
   for (const node of nodes) {
-    paragraphs.push(...await renderNode(node, listDepth));
+    blocks.push(...await renderNode(node, listDepth));
   }
 
-  return paragraphs;
+  return blocks;
 }
 
-async function renderNode(node: NotionBlockNode, listDepth: number): Promise<Paragraph[]> {
+async function renderNode(node: NotionBlockNode, listDepth: number): Promise<DocxBlock[]> {
   const block = node.block;
 
   switch (block.type) {
@@ -347,6 +353,12 @@ async function renderNode(node: NotionBlockNode, listDepth: number): Promise<Par
     case "column": {
       return renderNodes(node.children, 0);
     }
+    case "table": {
+      return renderTableBlock(node);
+    }
+    case "table_row": {
+      return [];
+    }
     case "table_of_contents": {
       return [];
     }
@@ -354,6 +366,93 @@ async function renderNode(node: NotionBlockNode, listDepth: number): Promise<Par
       return renderNodes(node.children, 0);
     }
   }
+}
+
+function renderTableBlock(node: NotionBlockNode): Table[] {
+  const block = node.block;
+
+  if (block.type !== "table") {
+    return [];
+  }
+
+  const rows = node.children
+    .filter((child) => child.block.type === "table_row")
+    .map((child, rowIndex) => renderTableRow(child, {
+      isHeaderRow: block.table.has_column_header && rowIndex === 0,
+      hasRowHeader: block.table.has_row_header,
+    }));
+
+  if (rows.length === 0) {
+    return [];
+  }
+
+  return [
+    new Table({
+      width: {
+        size: 100,
+        type: WidthType.PERCENTAGE,
+      },
+      layout: TableLayoutType.AUTOFIT,
+      borders: {
+        top: { style: BorderStyle.SINGLE, size: 4, color: "D1D5DB" },
+        bottom: { style: BorderStyle.SINGLE, size: 4, color: "D1D5DB" },
+        left: { style: BorderStyle.SINGLE, size: 4, color: "D1D5DB" },
+        right: { style: BorderStyle.SINGLE, size: 4, color: "D1D5DB" },
+        insideHorizontal: { style: BorderStyle.SINGLE, size: 4, color: "D1D5DB" },
+        insideVertical: { style: BorderStyle.SINGLE, size: 4, color: "D1D5DB" },
+      },
+      rows,
+    }),
+  ];
+}
+
+function renderTableRow(
+  node: NotionBlockNode,
+  options: { isHeaderRow: boolean; hasRowHeader: boolean },
+): TableRow {
+  const block = node.block;
+
+  if (block.type !== "table_row") {
+    return new TableRow({ children: [] });
+  }
+
+  return new TableRow({
+    tableHeader: options.isHeaderRow,
+    children: block.table_row.cells.map((cell, cellIndex) =>
+      renderTableCell(cell, {
+        isHeader: options.isHeaderRow || (options.hasRowHeader && cellIndex === 0),
+      })),
+  });
+}
+
+function renderTableCell(
+  richText: Parameters<typeof renderPlainText>[0],
+  options: { isHeader: boolean },
+): TableCell {
+  const children = renderRichTextChildren(richText, "", options.isHeader);
+
+  return new TableCell({
+    width: {
+      size: 100,
+      type: WidthType.AUTO,
+    },
+    margins: {
+      top: 90,
+      bottom: 90,
+      left: 120,
+      right: 120,
+    },
+    shading: options.isHeader ? { fill: "F3F4F6" } : undefined,
+    children: [
+      new Paragraph({
+        spacing: {
+          before: 0,
+          after: 0,
+        },
+        children: children.length > 0 ? children : [new TextRun("")],
+      }),
+    ],
+  });
 }
 
 function renderParagraphBlock(
@@ -557,6 +656,7 @@ function renderLinkParagraphs(url: string, label: string): Paragraph[] {
 function renderRichTextChildren(
   richText: Parameters<typeof renderPlainText>[0],
   prefix = "",
+  forceBold = false,
 ): ParagraphChild[] {
   const children: ParagraphChild[] = [];
 
@@ -578,7 +678,7 @@ function renderRichTextChildren(
 
     const textRun = new TextRun({
       text: value,
-      bold: item.annotations.bold,
+      bold: forceBold || item.annotations.bold,
       italics: item.annotations.italic,
       strike: item.annotations.strikethrough,
       font: resolveTextRunFont(item.annotations.code, item.annotations.italic),
@@ -591,7 +691,7 @@ function renderRichTextChildren(
           children: [
             new TextRun({
               text: value,
-              bold: item.annotations.bold,
+              bold: forceBold || item.annotations.bold,
               italics: item.annotations.italic,
               strike: item.annotations.strikethrough,
               font: resolveTextRunFont(item.annotations.code, item.annotations.italic),
@@ -609,8 +709,8 @@ function renderRichTextChildren(
   return children;
 }
 
-function appendChildren(paragraphs: Paragraph[], children: Paragraph[]): Paragraph[] {
-  return [...paragraphs, ...children];
+function appendChildren(blocks: DocxBlock[], children: DocxBlock[]): DocxBlock[] {
+  return [...blocks, ...children];
 }
 
 async function loadEmbeddedFonts(): Promise<Array<{
