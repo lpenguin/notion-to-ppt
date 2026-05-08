@@ -52,6 +52,7 @@ const ITALIC_FONT_FAMILY = "Inter Italic";
 const DEFAULT_FONT_SIZE = 24;
 const REGULAR_FONT_PATH = resolve("fonts/Inter-VariableFont_opsz,wght.ttf");
 const ITALIC_FONT_PATH = resolve("fonts/Inter-Italic-VariableFont_opsz,wght.ttf");
+const DOCX_STYLES_PATH = resolve("src/docx-styles.xml");
 const REGULAR_FONT_URL = pathToFileURL(REGULAR_FONT_PATH).href;
 const ITALIC_FONT_URL = pathToFileURL(ITALIC_FONT_PATH).href;
 const MERMAID_SCRIPT_PATH = resolve("node_modules/mermaid/dist/mermaid.min.js");
@@ -108,10 +109,14 @@ async function parseArgs(argv: string[]): Promise<CliOptions> {
 
 async function renderDocxDocument(page: NotionPageContent): Promise<Document> {
   const children = await renderNodes(page.blocks, 0);
-  const fonts = await loadEmbeddedFonts();
+  const [fonts, externalStyles] = await Promise.all([
+    loadEmbeddedFonts(),
+    loadExternalStyles(),
+  ]);
 
   return new Document({
     fonts,
+    externalStyles,
     styles: {
       default: {
         document: {
@@ -121,103 +126,6 @@ async function renderDocxDocument(page: NotionPageContent): Promise<Document> {
           },
         },
       },
-      paragraphStyles: [
-        {
-          id: "NotionTitle",
-          name: "Notion Title",
-          basedOn: "Normal",
-          next: "Normal",
-          quickFormat: true,
-          run: {
-            font: DEFAULT_FONT_FAMILY,
-            size: 34,
-            bold: true,
-            color: "111827",
-          },
-          paragraph: {
-            spacing: {
-              before: 0,
-              after: 240,
-            },
-          },
-        },
-        {
-          id: "NotionHeading1",
-          name: "Notion Heading 1",
-          basedOn: "Normal",
-          next: "Normal",
-          quickFormat: true,
-          run: {
-            font: DEFAULT_FONT_FAMILY,
-            size: 45,
-            bold: true,
-            color: "111827",
-          },
-          paragraph: {
-            spacing: {
-              before: 320,
-              after: 140,
-            },
-          },
-        },
-        {
-          id: "NotionHeading2",
-          name: "Notion Heading 2",
-          basedOn: "Normal",
-          next: "Normal",
-          quickFormat: true,
-          run: {
-            font: DEFAULT_FONT_FAMILY,
-            size: 36,
-            bold: true,
-            color: "111827",
-          },
-          paragraph: {
-            spacing: {
-              before: 280,
-              after: 120,
-            },
-          },
-        },
-        {
-          id: "NotionHeading3",
-          name: "Notion Heading 3",
-          basedOn: "Normal",
-          next: "Normal",
-          quickFormat: true,
-          run: {
-            font: DEFAULT_FONT_FAMILY,
-            size: 30,
-            bold: true,
-            color: "111827",
-          },
-          paragraph: {
-            spacing: {
-              before: 220,
-              after: 100,
-            },
-          },
-        },
-        {
-          id: "NotionHeading4",
-          name: "Notion Heading 4",
-          basedOn: "Normal",
-          next: "Normal",
-          quickFormat: true,
-          run: {
-            font: DEFAULT_FONT_FAMILY,
-            size: 27,
-            bold: true,
-            color: "111827",
-          },
-          paragraph: {
-            spacing: {
-              before: 180,
-              after: 80,
-            },
-          },
-        },
-      ],
     },
     numbering: {
       config: [
@@ -532,7 +440,6 @@ function renderHeadingBlock(
     ? [
         new Paragraph({
           heading,
-          style: resolveHeadingStyle(heading),
           spacing: resolveHeadingSpacing(heading),
           children,
         }),
@@ -1020,29 +927,16 @@ async function loadEmbeddedFonts(): Promise<Array<{
   ];
 }
 
+async function loadExternalStyles(): Promise<string> {
+  return readFile(DOCX_STYLES_PATH, "utf8");
+}
+
 function resolveTextRunFont(isCode: boolean, isItalic: boolean): string | undefined {
   if (isCode) {
     return "Courier New";
   }
 
   return isItalic ? ITALIC_FONT_FAMILY : DEFAULT_FONT_FAMILY;
-}
-
-function resolveHeadingStyle(heading: (typeof HeadingLevel)[keyof typeof HeadingLevel]): string | undefined {
-  switch (heading) {
-    case HeadingLevel.TITLE:
-      return "NotionTitle";
-    case HeadingLevel.HEADING_1:
-      return "NotionHeading1";
-    case HeadingLevel.HEADING_2:
-      return "NotionHeading2";
-    case HeadingLevel.HEADING_3:
-      return "NotionHeading3";
-    case HeadingLevel.HEADING_4:
-      return "NotionHeading4";
-    default:
-      return undefined;
-  }
 }
 
 function resolveHeadingSpacing(
