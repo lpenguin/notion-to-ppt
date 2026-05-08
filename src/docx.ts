@@ -1,6 +1,9 @@
 import { Buffer } from "node:buffer";
+import { randomUUID } from "node:crypto";
+import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
+import { pathToFileURL } from "node:url";
 import { imageSize } from "image-size";
 import {
   AlignmentType,
@@ -22,6 +25,7 @@ import {
 } from "docx";
 import type { ParagraphChild } from "docx";
 import { Command } from "commander";
+import puppeteer, { type Browser } from "puppeteer-core";
 
 import {
   createNotionClient,
@@ -46,19 +50,37 @@ const ITALIC_FONT_FAMILY = "Inter Italic";
 const DEFAULT_FONT_SIZE = 24;
 const REGULAR_FONT_PATH = resolve("fonts/Inter-VariableFont_opsz,wght.ttf");
 const ITALIC_FONT_PATH = resolve("fonts/Inter-Italic-VariableFont_opsz,wght.ttf");
+const REGULAR_FONT_URL = pathToFileURL(REGULAR_FONT_PATH).href;
+const ITALIC_FONT_URL = pathToFileURL(ITALIC_FONT_PATH).href;
+const MERMAID_SCRIPT_PATH = resolve("node_modules/mermaid/dist/mermaid.min.js");
+const MERMAID_BROWSER_PATHS = [
+  process.env.GOOGLE_CHROME_BIN,
+  process.env.PUPPETEER_EXECUTABLE_PATH,
+  "/usr/bin/google-chrome",
+  "/usr/bin/google-chrome-stable",
+].filter((value): value is string => Boolean(value));
+const MERMAID_VIEWPORT_WIDTH = 1600;
+const MERMAID_VIEWPORT_HEIGHT = 1200;
+const MERMAID_WRAPPING_WIDTH = 700;
+const MERMAID_FONT_STACK = '"Trebuchet MS", Verdana, Arial, "Noto Color Emoji", sans-serif';
 type DocxBlock = Paragraph | Table;
+let mermaidBrowserPromise: Promise<Browser> | null = null;
 
 async function main(): Promise<void> {
-  const options = await parseArgs(process.argv);
-  const notion = createNotionClient();
-  const page = await fetchPageContent(notion, options.page);
-  const outputPath = resolve(options.output ?? `${slugify(page.title)}.docx`);
-  const document = await renderDocxDocument(page);
-  const buffer = await Packer.toBuffer(document);
+  try {
+    const options = await parseArgs(process.argv);
+    const notion = createNotionClient();
+    const page = await fetchPageContent(notion, options.page);
+    const outputPath = resolve(options.output ?? `${slugify(page.title)}.docx`);
+    const document = await renderDocxDocument(page);
+    const buffer = await Packer.toBuffer(document);
 
-  await Bun.write(outputPath, buffer);
+    await Bun.write(outputPath, buffer);
 
-  console.log(`Created ${outputPath}`);
+    console.log(`Created ${outputPath}`);
+  } finally {
+    await closeMermaidBrowser();
+  }
 }
 
 async function parseArgs(argv: string[]): Promise<CliOptions> {
@@ -314,7 +336,13 @@ async function renderNode(node: NotionBlockNode, listDepth: number): Promise<Doc
       );
     }
     case "code": {
-      return renderCodeBlock(renderPlainText(block.code.rich_text));
+      const text = renderPlainText(block.code.rich_text);
+
+      if (isMermaidLanguage(block.code.language)) {
+        return renderMermaidBlock(text);
+      }
+
+      return renderCodeBlock(text);
     }
     case "image": {
       return renderImageBlock(node);
@@ -564,6 +592,140 @@ function renderCodeBlock(text: string): Paragraph[] {
   );
 }
 
+async function renderMermaidBlock(source: string): Promise<Paragraph[]> {
+  const definition = source.trim();
+
+  if (!definition) {
+    return [];
+  }
+
+  try {
+    const image = await renderMermaidImageRun(definition);
+
+    if (!image) {
+      return renderCodeBlock(source);
+    }
+
+    return [
+      new Paragraph({
+        alignment: AlignmentType.CENTER,
+        spacing: {
+          before: 120,
+          after: 120,
+        },
+        children: [image],
+      }),
+    ];
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.warn(`Unable to render Mermaid diagram in DOCX output: ${message}`);
+    return renderCodeBlock(source);
+  }
+}
+
+async function renderMermaidImageRun(source: string): Promise<ImageRun | null> {
+  const diagram = await renderMermaidPng(source);
+  const { width, height, png } = diagram;
+
+  if (!width || !height) {
+    return null;
+  }
+
+  const dimensions = scaleDimensions(width, height, MAX_IMAGE_WIDTH, MAX_IMAGE_HEIGHT);
+  const altText = "Mermaid flowchart";
+
+  return new ImageRun({
+    type: "png",
+    data: png,
+    transformation: dimensions,
+    altText: {
+      title: altText,
+      description: altText,
+      name: altText,
+    },
+  });
+}
+
+async function renderMermaidPng(source: string): Promise<{ png: Buffer; width: number; height: number }> {
+  if (!existsSync(MERMAID_SCRIPT_PATH)) {
+    throw new Error(`Mermaid bundle not found at ${MERMAID_SCRIPT_PATH}. Run bun install first.`);
+  }
+
+  const normalizedSource = normalizeMermaidHtmlLabels(source);
+
+  const browser = await getMermaidBrowser();
+  const page = await browser.newPage();
+
+  try {
+    await page.setViewport({
+      width: MERMAID_VIEWPORT_WIDTH,
+      height: MERMAID_VIEWPORT_HEIGHT,
+      deviceScaleFactor: 2,
+    });
+    await page.setContent(`<!doctype html><html><head><style>${buildMermaidFontCss()}</style></head><body><div id="container"></div></body></html>`);
+    await page.addScriptTag({ path: MERMAID_SCRIPT_PATH });
+    await page.evaluate(async () => {
+      await document.fonts.ready;
+    });
+
+    await page.evaluate(async ({ definition, id, fontFamily, wrappingWidth }) => {
+      const mermaid = (globalThis as { mermaid?: { initialize: (config: unknown) => void; render: (id: string, text: string, container?: Element | null) => Promise<{ svg: string }> } }).mermaid;
+
+      if (!mermaid) {
+        throw new Error("Mermaid did not load in the headless browser page.");
+      }
+
+      mermaid.initialize({
+        startOnLoad: false,
+        securityLevel: "loose",
+        theme: "default",
+        fontFamily,
+        flowchart: {
+          htmlLabels: true,
+          useMaxWidth: false,
+          wrappingWidth,
+        },
+      });
+
+      const container = document.getElementById("container");
+      const { svg } = await mermaid.render(id, definition, container);
+      if (container) {
+        container.innerHTML = svg;
+      }
+    }, {
+      definition: normalizedSource,
+      id: `mermaid-${randomUUID()}`,
+      fontFamily: MERMAID_FONT_STACK,
+      wrappingWidth: MERMAID_WRAPPING_WIDTH,
+    });
+
+    const diagram = await page.$("#container svg");
+
+    if (!diagram) {
+      throw new Error("Mermaid did not render an SVG element.");
+    }
+
+    const box = await diagram.boundingBox();
+
+    if (!box || !box.width || !box.height) {
+      throw new Error("Mermaid rendered an empty diagram.");
+    }
+
+    const png = await diagram.screenshot({
+      type: "png",
+      omitBackground: false,
+    });
+
+    return {
+      png: Buffer.from(png),
+      width: Math.round(box.width),
+      height: Math.round(box.height),
+    };
+  } finally {
+    await page.close();
+  }
+}
+
 async function renderImageBlock(node: NotionBlockNode): Promise<Paragraph[]> {
   const block = node.block;
 
@@ -630,6 +792,119 @@ async function fetchImageRun(url: string, altText: string): Promise<ImageRun | n
       name: sanitizeText(altText),
     },
   });
+}
+
+async function getMermaidBrowser(): Promise<Browser> {
+  if (!mermaidBrowserPromise) {
+    const executablePath = resolveMermaidBrowserPath();
+
+    mermaidBrowserPromise = puppeteer.launch({
+      executablePath,
+      headless: true,
+      args: ["--no-sandbox", "--disable-setuid-sandbox"],
+    });
+  }
+
+  return mermaidBrowserPromise;
+}
+
+async function closeMermaidBrowser(): Promise<void> {
+  if (!mermaidBrowserPromise) {
+    return;
+  }
+
+  const browserPromise = mermaidBrowserPromise;
+  mermaidBrowserPromise = null;
+  const browser = await browserPromise;
+  await browser.close();
+}
+
+function resolveMermaidBrowserPath(): string {
+  const executablePath = MERMAID_BROWSER_PATHS.find((value) => existsSync(value));
+
+  if (!executablePath) {
+    throw new Error(
+      "Could not find a Chrome executable for Mermaid rendering. Set GOOGLE_CHROME_BIN or PUPPETEER_EXECUTABLE_PATH.",
+    );
+  }
+
+  return executablePath;
+}
+
+function isMermaidLanguage(language: string): boolean {
+  return language.trim().toLowerCase() === "mermaid";
+}
+
+function buildMermaidFontCss(): string {
+  return `
+    @font-face {
+      font-family: "${DEFAULT_FONT_FAMILY}";
+      src: url("${REGULAR_FONT_URL}") format("truetype");
+      font-style: normal;
+      font-weight: 100 900;
+      font-display: block;
+    }
+
+    @font-face {
+      font-family: "${DEFAULT_FONT_FAMILY}";
+      src: url("${ITALIC_FONT_URL}") format("truetype");
+      font-style: italic;
+      font-weight: 100 900;
+      font-display: block;
+    }
+
+    html, body, #container {
+      margin: 0;
+      padding: 0;
+      font-family: ${MERMAID_FONT_STACK};
+    }
+
+    #container .nodeLabel,
+    #container .edgeLabel {
+      max-width: none !important;
+    }
+
+    #container .nodeLabel p,
+    #container .edgeLabel p {
+      margin: 0;
+      white-space: nowrap !important;
+      word-spacing: -0.08em;
+      letter-spacing: normal;
+    }
+  `;
+}
+
+function normalizeMermaidHtmlLabels(source: string): string {
+  return source.replace(/"([^"\\]*(?:\\.[^"\\]*)*)"/g, (match, value: string) => {
+    if (!looksLikeMarkdownLabel(value)) {
+      return match;
+    }
+
+    const unescaped = value.replace(/\\"/g, '"');
+    return `"${convertMarkdownLabelToHtml(unescaped)}"`;
+  });
+}
+
+function looksLikeMarkdownLabel(value: string): boolean {
+  return /\*\*|__|~~|\*[^*]+\*|_[^_]+_/.test(value);
+}
+
+function convertMarkdownLabelToHtml(value: string): string {
+  return escapeMermaidHtml(value)
+    .replace(/\*\*([^*]+)\*\*/g, "<b>$1</b>")
+    .replace(/__([^_]+)__/g, "<b>$1</b>")
+    .replace(/~~([^~]+)~~/g, "<s>$1</s>")
+    .replace(/\*([^*]+)\*/g, "<i>$1</i>")
+    .replace(/_([^_]+)_/g, "<i>$1</i>")
+    .replace(/\n/g, "<br/>")
+    .replace(/"/g, "&quot;");
+}
+
+function escapeMermaidHtml(value: string): string {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
 }
 
 function renderLinkParagraphs(url: string, label: string): Paragraph[] {
