@@ -123,8 +123,8 @@ async function renderDocxDocument(page: NotionPageContent): Promise<Document> {
       },
       paragraphStyles: [
         {
-          id: "Title",
-          name: "Title",
+          id: "NotionTitle",
+          name: "Notion Title",
           basedOn: "Normal",
           next: "Normal",
           quickFormat: true,
@@ -142,14 +142,14 @@ async function renderDocxDocument(page: NotionPageContent): Promise<Document> {
           },
         },
         {
-          id: "Heading1",
-          name: "Heading 1",
+          id: "NotionHeading1",
+          name: "Notion Heading 1",
           basedOn: "Normal",
           next: "Normal",
           quickFormat: true,
           run: {
             font: DEFAULT_FONT_FAMILY,
-            size: 30,
+            size: 45,
             bold: true,
             color: "111827",
           },
@@ -161,14 +161,14 @@ async function renderDocxDocument(page: NotionPageContent): Promise<Document> {
           },
         },
         {
-          id: "Heading2",
-          name: "Heading 2",
+          id: "NotionHeading2",
+          name: "Notion Heading 2",
           basedOn: "Normal",
           next: "Normal",
           quickFormat: true,
           run: {
             font: DEFAULT_FONT_FAMILY,
-            size: 28,
+            size: 36,
             bold: true,
             color: "111827",
           },
@@ -180,14 +180,14 @@ async function renderDocxDocument(page: NotionPageContent): Promise<Document> {
           },
         },
         {
-          id: "Heading3",
-          name: "Heading 3",
+          id: "NotionHeading3",
+          name: "Notion Heading 3",
           basedOn: "Normal",
           next: "Normal",
           quickFormat: true,
           run: {
             font: DEFAULT_FONT_FAMILY,
-            size: 26,
+            size: 30,
             bold: true,
             color: "111827",
           },
@@ -199,14 +199,14 @@ async function renderDocxDocument(page: NotionPageContent): Promise<Document> {
           },
         },
         {
-          id: "Heading4",
-          name: "Heading 4",
+          id: "NotionHeading4",
+          name: "Notion Heading 4",
           basedOn: "Normal",
           next: "Normal",
           quickFormat: true,
           run: {
             font: DEFAULT_FONT_FAMILY,
-            size: 24,
+            size: 27,
             bold: true,
             color: "111827",
           },
@@ -527,7 +527,7 @@ function renderHeadingBlock(
   richText: Parameters<typeof renderPlainText>[0],
   heading: (typeof HeadingLevel)[keyof typeof HeadingLevel],
 ): Paragraph[] {
-  const children = renderRichTextChildren(richText);
+  const children = renderRichTextChildren(richText, "", true);
   return children.length > 0
     ? [
         new Paragraph({
@@ -1031,15 +1031,15 @@ function resolveTextRunFont(isCode: boolean, isItalic: boolean): string | undefi
 function resolveHeadingStyle(heading: (typeof HeadingLevel)[keyof typeof HeadingLevel]): string | undefined {
   switch (heading) {
     case HeadingLevel.TITLE:
-      return "Title";
+      return "NotionTitle";
     case HeadingLevel.HEADING_1:
-      return "Heading1";
+      return "NotionHeading1";
     case HeadingLevel.HEADING_2:
-      return "Heading2";
+      return "NotionHeading2";
     case HeadingLevel.HEADING_3:
-      return "Heading3";
+      return "NotionHeading3";
     case HeadingLevel.HEADING_4:
-      return "Heading4";
+      return "NotionHeading4";
     default:
       return undefined;
   }
