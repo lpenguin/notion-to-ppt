@@ -1,6 +1,5 @@
 import { Buffer } from "node:buffer";
 import { randomUUID } from "node:crypto";
-import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -25,7 +24,7 @@ import {
 } from "docx";
 import type { ParagraphChild } from "docx";
 import { Command } from "commander";
-import puppeteer, { type Browser } from "puppeteer-core";
+import type { Browser } from "playwright";
 
 import {
   createNotionClient,
@@ -34,6 +33,8 @@ import {
   type NotionBlockNode,
   type NotionPageContent,
 } from "./notion.ts";
+
+process.env.PLAYWRIGHT_BROWSERS_PATH ??= "0";
 
 type CliOptions = {
   page: string;
@@ -53,12 +54,6 @@ const ITALIC_FONT_PATH = resolve("fonts/Inter-Italic-VariableFont_opsz,wght.ttf"
 const REGULAR_FONT_URL = pathToFileURL(REGULAR_FONT_PATH).href;
 const ITALIC_FONT_URL = pathToFileURL(ITALIC_FONT_PATH).href;
 const MERMAID_SCRIPT_PATH = resolve("node_modules/mermaid/dist/mermaid.min.js");
-const MERMAID_BROWSER_PATHS = [
-  process.env.GOOGLE_CHROME_BIN,
-  process.env.PUPPETEER_EXECUTABLE_PATH,
-  "/usr/bin/google-chrome",
-  "/usr/bin/google-chrome-stable",
-].filter((value): value is string => Boolean(value));
 const MERMAID_VIEWPORT_WIDTH = 1600;
 const MERMAID_VIEWPORT_HEIGHT = 1200;
 const MERMAID_WRAPPING_WIDTH = 700;
@@ -647,21 +642,19 @@ async function renderMermaidImageRun(source: string): Promise<ImageRun | null> {
 }
 
 async function renderMermaidPng(source: string): Promise<{ png: Buffer; width: number; height: number }> {
-  if (!existsSync(MERMAID_SCRIPT_PATH)) {
-    throw new Error(`Mermaid bundle not found at ${MERMAID_SCRIPT_PATH}. Run bun install first.`);
-  }
-
   const normalizedSource = normalizeMermaidHtmlLabels(source);
 
   const browser = await getMermaidBrowser();
-  const page = await browser.newPage();
-
-  try {
-    await page.setViewport({
+  const context = await browser.newContext({
+    viewport: {
       width: MERMAID_VIEWPORT_WIDTH,
       height: MERMAID_VIEWPORT_HEIGHT,
-      deviceScaleFactor: 2,
-    });
+    },
+    deviceScaleFactor: 2,
+  });
+  const page = await context.newPage();
+
+  try {
     await page.setContent(`<!doctype html><html><head><style>${buildMermaidFontCss()}</style></head><body><div id="container"></div></body></html>`);
     await page.addScriptTag({ path: MERMAID_SCRIPT_PATH });
     await page.evaluate(async () => {
@@ -722,7 +715,7 @@ async function renderMermaidPng(source: string): Promise<{ png: Buffer; width: n
       height: Math.round(box.height),
     };
   } finally {
-    await page.close();
+    await context.close();
   }
 }
 
@@ -796,13 +789,12 @@ async function fetchImageRun(url: string, altText: string): Promise<ImageRun | n
 
 async function getMermaidBrowser(): Promise<Browser> {
   if (!mermaidBrowserPromise) {
-    const executablePath = resolveMermaidBrowserPath();
-
-    mermaidBrowserPromise = puppeteer.launch({
-      executablePath,
-      headless: true,
-      args: ["--no-sandbox", "--disable-setuid-sandbox"],
-    });
+    mermaidBrowserPromise = import("playwright").then(({ chromium }) =>
+      chromium.launch({
+        headless: true,
+        args: ["--no-sandbox", "--disable-setuid-sandbox"],
+      }),
+    );
   }
 
   return mermaidBrowserPromise;
@@ -817,18 +809,6 @@ async function closeMermaidBrowser(): Promise<void> {
   mermaidBrowserPromise = null;
   const browser = await browserPromise;
   await browser.close();
-}
-
-function resolveMermaidBrowserPath(): string {
-  const executablePath = MERMAID_BROWSER_PATHS.find((value) => existsSync(value));
-
-  if (!executablePath) {
-    throw new Error(
-      "Could not find a Chrome executable for Mermaid rendering. Set GOOGLE_CHROME_BIN or PUPPETEER_EXECUTABLE_PATH.",
-    );
-  }
-
-  return executablePath;
 }
 
 function isMermaidLanguage(language: string): boolean {

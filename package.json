@@ -6,6 +6,7 @@
   "scripts": {
     "convert": "bun run src/index.ts",
     "convert-docx": "bun run src/docx.ts",
+    "install:browsers": "PLAYWRIGHT_BROWSERS_PATH=0 playwright install chromium",
     "check": "tsc --noEmit",
     "build": "tsc -p tsconfig.json"
   },
@@ -16,7 +17,7 @@
     "docx": "^9.6.1",
     "image-size": "^2.0.2",
     "mermaid": "^11.14.0",
-    "puppeteer-core": "^24.43.0"
+    "playwright": "^1.59.1"
   },
   "devDependencies": {
     "@types/bun": "latest",
