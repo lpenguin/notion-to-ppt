@@ -19,6 +19,12 @@ The repo also includes a DOCX export path for turning the same Notion content in
 bun install
 ```
 
+1. Install the Playwright Chromium build used for PPTX rendering:
+
+```bash
+bun run install:browsers
+```
+
 2. Create a Notion integration and share the source page with it.
 
 3. Set your token:
