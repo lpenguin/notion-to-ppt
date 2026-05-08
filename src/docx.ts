@@ -389,7 +389,7 @@ async function renderNode(node: NotionBlockNode, listDepth: number): Promise<Doc
       return [new Paragraph({ text: sanitizeText(`$${block.equation.expression}$`) })];
     }
     case "divider": {
-      return [new Paragraph({ thematicBreak: true })];
+      return [new Paragraph({ pageBreakBefore: true })];
     }
     case "child_page": {
       return [new Paragraph({ text: sanitizeText(block.child_page.title), heading: HeadingLevel.HEADING_1 })];
