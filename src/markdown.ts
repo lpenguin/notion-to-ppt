@@ -1,5 +1,5 @@
 import type { NotionBlockNode, NotionPageContent } from "./notion.ts";
-import { renderPlainText, renderRichTextMarkdown } from "./notion.ts";
+import { hasExtendedRichTextBlock, renderPlainText, renderRichTextMarkdown } from "./notion.ts";
 
 type Slide = {
   title?: string;
@@ -118,8 +118,22 @@ export function renderDeckMarkdown(page: NotionPageContent): string {
 
 function renderBlock(node: NotionBlockNode, depth: number): string[] {
   const block = node.block;
+  const runtimeBlock = block as { type: string } & Record<string, unknown>;
   const indent = "  ".repeat(depth);
   const lines: string[] = [];
+
+  if (hasExtendedRichTextBlock(runtimeBlock, "heading_4")) {
+    const text = renderRichTextMarkdown(runtimeBlock.heading_4.rich_text);
+    if (text) {
+      lines.push(`#### ${text}`);
+    }
+
+    for (const child of node.children) {
+      appendBlockLines(lines, renderBlock(child, depth), child.block.type);
+    }
+
+    return compactLines(lines);
+  }
 
   switch (block.type) {
     case "paragraph": {
@@ -425,6 +439,12 @@ function renderColumnHtml(nodes: NotionBlockNode[], width: string): string {
 
 function renderBlockHtml(node: NotionBlockNode): string {
   const block = node.block;
+  const runtimeBlock = block as { type: string } & Record<string, unknown>;
+
+  if (hasExtendedRichTextBlock(runtimeBlock, "heading_4")) {
+    const text = renderRichTextHtml(runtimeBlock.heading_4.rich_text);
+    return text ? `<h4>${text}</h4>${renderChildHtml(node.children)}` : renderChildHtml(node.children);
+  }
 
   switch (block.type) {
     case "paragraph": {

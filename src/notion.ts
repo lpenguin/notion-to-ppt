@@ -22,6 +22,10 @@ export type NotionPageContent = {
   blocks: NotionBlockNode[];
 };
 
+export type ExtendedRichTextBlock<TType extends string> = {
+  type: TType;
+} & Record<TType, { rich_text: RichTextItemResponse[] }>;
+
 export function createNotionClient(token = process.env.NOTION_TOKEN): Client {
   if (!token) {
     throw new Error("Missing NOTION_TOKEN. Set it in your environment or .env file.");
@@ -108,6 +112,18 @@ export function renderRichTextMarkdown(richText: RichTextItemResponse[]): string
     })
     .join("")
     .trim();
+}
+
+export function hasExtendedRichTextBlock<TType extends string, TBlock extends { type: string } & Record<string, unknown>>(
+  block: TBlock,
+  type: TType,
+): block is TBlock & ExtendedRichTextBlock<TType> {
+  if (block.type !== type) {
+    return false;
+  }
+
+  const value = (block as Record<string, unknown>)[type];
+  return typeof value === "object" && value !== null && Array.isArray((value as { rich_text?: unknown }).rich_text);
 }
 
 function normalizePageId(input: string): string {

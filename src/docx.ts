@@ -29,6 +29,7 @@ import type { Browser } from "playwright";
 import {
   createNotionClient,
   fetchPageContent,
+  hasExtendedRichTextBlock,
   renderPlainText,
   type NotionBlockNode,
   type NotionPageContent,
@@ -197,6 +198,25 @@ async function renderDocxDocument(page: NotionPageContent): Promise<Document> {
             },
           },
         },
+        {
+          id: "Heading4",
+          name: "Heading 4",
+          basedOn: "Normal",
+          next: "Normal",
+          quickFormat: true,
+          run: {
+            font: DEFAULT_FONT_FAMILY,
+            size: 24,
+            bold: true,
+            color: "111827",
+          },
+          paragraph: {
+            spacing: {
+              before: 180,
+              after: 80,
+            },
+          },
+        },
       ],
     },
     numbering: {
@@ -266,6 +286,14 @@ async function renderNodes(nodes: NotionBlockNode[], listDepth: number): Promise
 
 async function renderNode(node: NotionBlockNode, listDepth: number): Promise<DocxBlock[]> {
   const block = node.block;
+  const runtimeBlock = block as { type: string } & Record<string, unknown>;
+
+  if (hasExtendedRichTextBlock(runtimeBlock, "heading_4")) {
+    return appendChildren(
+      renderHeadingBlock(runtimeBlock.heading_4.rich_text, HeadingLevel.HEADING_4),
+      await renderNodes(node.children, 0),
+    );
+  }
 
   switch (block.type) {
     case "paragraph": {
@@ -1010,6 +1038,8 @@ function resolveHeadingStyle(heading: (typeof HeadingLevel)[keyof typeof Heading
       return "Heading2";
     case HeadingLevel.HEADING_3:
       return "Heading3";
+    case HeadingLevel.HEADING_4:
+      return "Heading4";
     default:
       return undefined;
   }
@@ -1027,6 +1057,8 @@ function resolveHeadingSpacing(
       return { before: 280, after: 120 };
     case HeadingLevel.HEADING_3:
       return { before: 220, after: 100 };
+    case HeadingLevel.HEADING_4:
+      return { before: 180, after: 80 };
     default:
       return undefined;
   }
